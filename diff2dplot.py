@@ -31,7 +31,7 @@ def plotdens(dens,x1,x2,first=False):
         if first:
             plt.colorbar()
         plt.show()
-        plt.pause(0.1)
+        plt.pause(0.5)
         #plt.savefig(f"image{_plotdens_image_number:03d}.png")
         _plotdens_image_number += 1
     else:
