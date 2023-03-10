@@ -74,35 +74,40 @@ def main():
     # copy the initialized density array; becomes 64-bit float array in device memory
     dens_dev = cp.array(dens)
 
+    # define block and grid dimensions to fit the data
+    blockDim = (32, 32)
+    gridDim = ((nrows + blockDim[0] - 1) // blockDim[0], (ncols + blockDim[1] - 1) // blockDim[1])
+
+    print("Block size:", blockDim[0] * blockDim[1])
+    print("Grid size:", gridDim[0] * gridDim[1])
+
     # perform the computationally heavy component on the GPU as follows
+
     for s in range(nsteps):
         print("Step", s, "of", nsteps)
+        t1 = time.time()
 
         # redefine output arrays as blanks
-        output_laplacian_dev = cp.zeros((npnts, npnts)) # temporary array to hold the laplacian; default 64-bit floats
-        output_densnext_dev = cp.zeros((npnts, npnts)) # temporary array to hold the newly evolved density; default 64-bit floats
+        output_laplacian_dev = cp.zeros((npnts, npnts))  # temporary array to hold the laplacian; default 64-bit floats
+        output_densnext_dev = cp.zeros((npnts, npnts))  # temporary array to hold the newly evolved density; default 64-bit floats
 
-        # define block and grid dimensions to fit the data
-        blockDim = (32, 32)
-        gridDim = ((nrows + blockDim[0] - 1) // blockDim[0], (ncols + blockDim[1] - 1) // blockDim[1])
+        t2 = time.time()
+        print("\ttime making input arrays:", t2 - t1, "s")
 
-        # execute the kernel
+        # call the kernel function with optimized block and grid sizes
         evolve_density_kernel[gridDim, blockDim](dens_dev, output_laplacian_dev, output_densnext_dev, nrows, ncols, D, dx, dt)
+        dens_dev = output_densnext_dev
+        simtime += dt  # update simulation time
 
-        # copy the results to become the new density array on device memory
-        dens_dev = output_densnext_dev.copy()
-        simtime += dt # update the simulation time
+        t3 = time.time()
+        print("\ttime executing the kernel:", t3 - t2, "s")
 
-        # free up device memory before the next round
-        del output_densnext_dev, output_laplacian_dev
-
-        # Plot and report time.
-        if (s+1)%nper == 0:
+        # output snapshot if necessary
+        if (s + 1) % nper == 0:
             print(simtime)
             if graphics:
-                print("Plotting graphics...")
-                dens_host = cp.asnumpy(dens_dev)
-                plotdens(dens_host, x[0], x[-1])
+                dens = dens_dev.get()
+                plotdens(dens, x[0], x[-1])
 
 if __name__ == '__main__':
     main()
