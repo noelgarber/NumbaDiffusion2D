@@ -11,7 +11,7 @@
 import numpy as np
 import cupy as cp
 import time
-from numba import cuda
+from numba import cuda, int32, float64
 from diff2dplot import plotdens
 
 '''
@@ -24,6 +24,8 @@ Define a CUDA kernel that evolves the density array. As input, it takes the foll
     ncols_dev:              the number of cols to iterate over
     D_dev, dx_dev, dt_dev:  input parameters
 '''
+
+'''
 @cuda.jit('void(float64[:,:], float64[:,:], float64[:,:], int32, int32, float64, float64, float64)')
 def evolve_density_kernel(input_dens_dev, output_laplacian_dev, output_densnext_dev, nrows_dev, ncols_dev, D_dev, dx_dev, dt_dev):
     for i in range(1, nrows_dev + 1):
@@ -32,6 +34,38 @@ def evolve_density_kernel(input_dens_dev, output_laplacian_dev, output_densnext_
     for i in range(1, nrows_dev + 1):
         for j in range(1, ncols_dev + 1):
             output_densnext_dev[i][j] = input_dens_dev[i][j] + (D_dev/dx_dev**2)*dt_dev*output_laplacian_dev[i][j]
+'''
+
+
+@cuda.jit('void(float64[:,:], float64[:,:], int32, int32)', device=True)
+def laplacian_kernel(input_dens_dev, output_laplacian_dev, nrows_dev, ncols_dev):
+    i, j = cuda.grid(2)
+    if 1 <= i <= nrows_dev and 1 <= j <= ncols_dev:
+        output_laplacian_dev[i][j] = input_dens_dev[i+1][j] + input_dens_dev[i-1][j] + input_dens_dev[i][j+1] + input_dens_dev[i][j-1] - 4*input_dens_dev[i][j]
+
+@cuda.jit('void(float64[:,:], float64[:,:], float64[:,:], int32, int32, float64, float64, float64)')
+def evolve_density_kernel(input_dens_dev, output_laplacian_dev, output_densnext_dev, nrows_dev, ncols_dev, D_dev, dx_dev, dt_dev):
+    # Initialize shared memory for input density
+    shared_input_dens = cuda.shared.array(shape=(32, 32), dtype=float64)
+
+    # Compute thread indices
+    i, j = cuda.grid(2)
+
+    # Copy input density to shared memory
+    if 1 <= i <= nrows_dev and 1 <= j <= ncols_dev:
+        shared_input_dens[i % 32][j % 32] = input_dens_dev[i][j]
+
+    # Synchronize threads to ensure all data has been copied to shared memory
+    cuda.syncthreads()
+
+    # Compute laplacian
+    laplacian_kernel(shared_input_dens, output_laplacian_dev, nrows_dev, ncols_dev)
+
+    # Compute density update
+    if 1 <= i <= nrows_dev and 1 <= j <= ncols_dev:
+        output_densnext_dev[i][j] = input_dens_dev[i][j] + (D_dev/dx_dev**2)*dt_dev*output_laplacian_dev[i][j]
+
+
 
 # driver routine
 def main():
