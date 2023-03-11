@@ -14,6 +14,8 @@ import time
 from numba import cuda, int32, float64
 from diff2dplot import plotdens
 
+# Current kernel with a new approach. Speed issues may be due to inefficient grid and block size, or inefficient
+# memory management (global memory is slow compared to shared memory), or some combination of these factors.
 @cuda.jit('void(float64[:,:], float64[:,:], int32, int32, float64, float64, float64)')
 def update_density(input_dens_dev, output_densnext_dev, nrows_dev, ncols_dev, D_dev, dx_dev, dt_dev):
     for i in range(1, nrows_dev + 1):
