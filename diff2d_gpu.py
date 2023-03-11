@@ -14,34 +14,12 @@ import time
 from numba import cuda, int32, float64
 from diff2dplot import plotdens
 
-'''
-Define a CUDA kernel that evolves the density array. As input, it takes the following variables, stored in device memory: 
-    input_dens_dev:         the 2D density array for the previous time step
-    output_laplacian_dev:   a blank 2D array of equal shape to the density array; 
-                            note that the laplacian from the previous time step is not taken as an argument and thus not required
-    output_densnext_dev:    a blank 2D array of equal shape to the density array; used to output the newly evolved density
-    nrows_dev:              the number of rows to iterate over
-    ncols_dev:              the number of cols to iterate over
-    D_dev, dx_dev, dt_dev:  input parameters
-'''
-
-'''
-@cuda.jit('void(float64[:,:], float64[:,:], float64[:,:], int32, int32, float64, float64, float64)')
-def evolve_density_kernel(input_dens_dev, output_laplacian_dev, output_densnext_dev, nrows_dev, ncols_dev, D_dev, dx_dev, dt_dev):
-    for i in range(1, nrows_dev + 1):
-        for j in range(1, ncols_dev + 1):
-            output_laplacian_dev[i][j] = input_dens_dev[i+1][j] + input_dens_dev[i-1][j] + input_dens_dev[i][j+1] + input_dens_dev[i][j-1] - 4*input_dens_dev[i][j]
-    for i in range(1, nrows_dev + 1):
-        for j in range(1, ncols_dev + 1):
-            output_densnext_dev[i][j] = input_dens_dev[i][j] + (D_dev/dx_dev**2)*dt_dev*output_laplacian_dev[i][j]
-'''
-
-
+# Define the kernel to compute the laplacian using shared memory; this is a kernel that is called from another kernel below
 @cuda.jit('void(float64[:,:], float64[:,:], int32, int32)', device=True)
 def laplacian_kernel(input_dens_dev, output_laplacian_dev, nrows_dev, ncols_dev):
     # Define shared memory
-    shared_input = cuda.shared.array(shape=(16, 16), dtype=float64)
-    shared_output = cuda.shared.array(shape=(16, 16), dtype=float64)
+    shared_input = cuda.shared.array(shape=(32, 32), dtype=float64)
+    shared_output = cuda.shared.array(shape=(32, 32), dtype=float64)
 
     # Load shared memory with input density values
     i, j = cuda.grid(2)
@@ -69,11 +47,15 @@ def laplacian_kernel(input_dens_dev, output_laplacian_dev, nrows_dev, ncols_dev)
             if i + si_idx > 0 and i + si_idx < nrows_dev + 1 and j + sj_idx > 0 and j + sj_idx < ncols_dev + 1:
                 output_laplacian_dev[i + si_idx, j + sj_idx] = shared_output[si_idx, sj_idx]
 
-
+# Define the main kernel to evolve the density using the diffusion equations; first computes the laplacian and then evolves the density
 @cuda.jit('void(float64[:,:], float64[:,:], float64[:,:], int32, int32, float64, float64, float64)')
 def evolve_density_kernel(input_dens_dev, output_laplacian_dev, output_densnext_dev, nrows_dev, ncols_dev, D_dev, dx_dev, dt_dev):
+    # Define block and grid dimensions for the Laplacian kernel launched from within this kernel below
+    blockDim_laplacian = (32, 32)
+    gridDim_laplacian = ((nrows_dev + blockDim_laplacian[0] - 1) // blockDim_laplacian[0], (ncols_dev + blockDim_laplacian[1] - 1) // blockDim_laplacian[1])
+
     # Compute the laplacian
-    laplacian_kernel[(nrows_dev + 14) // 16, (ncols_dev + 14) // 16](input_dens_dev, output_laplacian_dev, nrows_dev, ncols_dev)
+    laplacian_kernel[gridDim_laplacian, blockDim_laplacian](input_dens_dev, output_laplacian_dev, nrows_dev, ncols_dev)
 
     # Compute the new density
     i, j = cuda.grid(2)
@@ -154,7 +136,8 @@ def main():
         if (s + 1) % nper == 0:
             print(simtime)
             if graphics:
-                dens = dens_dev.get()
+                # Only retrieve the density array from device memory when it is intended to be displayed
+                dens = cp.asnumpy(dens_dev)
                 plotdens(dens, x[0], x[-1])
 
 if __name__ == '__main__':
