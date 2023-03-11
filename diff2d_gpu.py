@@ -14,39 +14,16 @@ import time
 from numba import cuda, int32, float64
 from diff2dplot import plotdens
 
-# Define the kernel to compute the laplacian using shared memory; this is a kernel that is called from another kernel below
-@cuda.jit('void(float64[:,:], float64[:,:], int32, int32)', device=True)
-def laplacian_kernel(input_dens_dev, output_laplacian_dev, nrows_dev, ncols_dev):
-    # Define shared memory
-    shared_input = cuda.shared.array(shape=(32, 32), dtype=float64)
-    shared_output = cuda.shared.array(shape=(32, 32), dtype=float64)
+@cuda.jit('void(float64[:,:], float64[:,:], int32, int32, float64, float64, float64)')
+def update_density(input_dens_dev, output_densnext_dev, nrows_dev, ncols_dev, D_dev, dx_dev, dt_dev):
+    for i in range(1, nrows_dev + 1):
+        for j in range(1, ncols_dev + 1):
+            laplacian_ij = input_dens_dev[i + 1][j] + input_dens_dev[i - 1][j] + input_dens_dev[i][j + 1] + input_dens_dev[i][j - 1] - 4 * input_dens_dev[i][j]
+            output_densnext_dev[i][j] = input_dens_dev[i][j] + (D_dev / dx_dev ** 2) * dt_dev * laplacian_ij
 
-    # Load shared memory with input density values
-    i, j = cuda.grid(2)
-    si, sj = cuda.gridsize(2)
-    for si_idx in range(si):
-        for sj_idx in range(sj):
-            shared_input[si_idx, sj_idx] = input_dens_dev[i + si_idx, j + sj_idx]
-    cuda.syncthreads()
 
-    # Compute the laplacian using shared memory
-    if i > 0 and i < nrows_dev + 1 and j > 0 and j < ncols_dev + 1:
-        shared_output[cuda.threadIdx.x, cuda.threadIdx.y] = (
-                shared_input[cuda.threadIdx.x + 1, cuda.threadIdx.y] +
-                shared_input[cuda.threadIdx.x - 1, cuda.threadIdx.y] +
-                shared_input[cuda.threadIdx.x, cuda.threadIdx.y + 1] +
-                shared_input[cuda.threadIdx.x, cuda.threadIdx.y - 1] -
-                4 * shared_input[cuda.threadIdx.x, cuda.threadIdx.y]
-        )
-
-    cuda.syncthreads()
-
-    # Write shared output back to global memory
-    for si_idx in range(si):
-        for sj_idx in range(sj):
-            if i + si_idx > 0 and i + si_idx < nrows_dev + 1 and j + sj_idx > 0 and j + sj_idx < ncols_dev + 1:
-                output_laplacian_dev[i + si_idx, j + sj_idx] = shared_output[si_idx, sj_idx]
-
+'''
+# TODO Use the cuda grid function etc. from here in the new kernel above
 # Define the main kernel to evolve the density using the diffusion equations; first computes the laplacian and then evolves the density
 @cuda.jit('void(float64[:,:], float64[:,:], float64[:,:], int32, int32, float64, float64, float64)')
 def evolve_density_kernel(input_dens_dev, output_laplacian_dev, output_densnext_dev, nrows_dev, ncols_dev, D_dev, dx_dev, dt_dev):
@@ -61,7 +38,7 @@ def evolve_density_kernel(input_dens_dev, output_laplacian_dev, output_densnext_
     i, j = cuda.grid(2)
     if i > 0 and i < nrows_dev + 1 and j > 0 and j < ncols_dev + 1:
         output_densnext_dev[i][j] = input_dens_dev[i][j] + (D_dev / dx_dev ** 2) * dt_dev * output_laplacian_dev[i][j]
-
+'''
 
 # driver routine
 def main():
@@ -125,7 +102,7 @@ def main():
         print("\ttime making input arrays:", t2 - t1, "s")
 
         # call the kernel function with optimized block and grid sizes
-        evolve_density_kernel[gridDim, blockDim](dens_dev, output_laplacian_dev, output_densnext_dev, nrows, ncols, D, dx, dt)
+        update_density[gridDim, blockDim](dens_dev, output_densnext_dev, nrows, ncols, D, dx, dt)
         dens_dev = output_densnext_dev
         simtime += dt  # update simulation time
 
