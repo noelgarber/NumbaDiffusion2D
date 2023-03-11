@@ -39,32 +39,46 @@ def evolve_density_kernel(input_dens_dev, output_laplacian_dev, output_densnext_
 
 @cuda.jit('void(float64[:,:], float64[:,:], int32, int32)', device=True)
 def laplacian_kernel(input_dens_dev, output_laplacian_dev, nrows_dev, ncols_dev):
+    # Define shared memory
+    shared_input = cuda.shared.array(shape=(16, 16), dtype=float64)
+    shared_output = cuda.shared.array(shape=(16, 16), dtype=float64)
+
+    # Load shared memory with input density values
     i, j = cuda.grid(2)
-    if 1 <= i <= nrows_dev and 1 <= j <= ncols_dev:
-        output_laplacian_dev[i][j] = input_dens_dev[i+1][j] + input_dens_dev[i-1][j] + input_dens_dev[i][j+1] + input_dens_dev[i][j-1] - 4*input_dens_dev[i][j]
+    si, sj = cuda.gridsize(2)
+    for si_idx in range(si):
+        for sj_idx in range(sj):
+            shared_input[si_idx, sj_idx] = input_dens_dev[i + si_idx, j + sj_idx]
+    cuda.syncthreads()
+
+    # Compute the laplacian using shared memory
+    if i > 0 and i < nrows_dev + 1 and j > 0 and j < ncols_dev + 1:
+        shared_output[cuda.threadIdx.x, cuda.threadIdx.y] = (
+                shared_input[cuda.threadIdx.x + 1, cuda.threadIdx.y] +
+                shared_input[cuda.threadIdx.x - 1, cuda.threadIdx.y] +
+                shared_input[cuda.threadIdx.x, cuda.threadIdx.y + 1] +
+                shared_input[cuda.threadIdx.x, cuda.threadIdx.y - 1] -
+                4 * shared_input[cuda.threadIdx.x, cuda.threadIdx.y]
+        )
+
+    cuda.syncthreads()
+
+    # Write shared output back to global memory
+    for si_idx in range(si):
+        for sj_idx in range(sj):
+            if i + si_idx > 0 and i + si_idx < nrows_dev + 1 and j + sj_idx > 0 and j + sj_idx < ncols_dev + 1:
+                output_laplacian_dev[i + si_idx, j + sj_idx] = shared_output[si_idx, sj_idx]
+
 
 @cuda.jit('void(float64[:,:], float64[:,:], float64[:,:], int32, int32, float64, float64, float64)')
 def evolve_density_kernel(input_dens_dev, output_laplacian_dev, output_densnext_dev, nrows_dev, ncols_dev, D_dev, dx_dev, dt_dev):
-    # Initialize shared memory for input density
-    shared_input_dens = cuda.shared.array(shape=(32, 32), dtype=float64)
+    # Compute the laplacian
+    laplacian_kernel[(nrows_dev + 14) // 16, (ncols_dev + 14) // 16](input_dens_dev, output_laplacian_dev, nrows_dev, ncols_dev)
 
-    # Compute thread indices
+    # Compute the new density
     i, j = cuda.grid(2)
-
-    # Copy input density to shared memory
-    if 1 <= i <= nrows_dev and 1 <= j <= ncols_dev:
-        shared_input_dens[i % 32][j % 32] = input_dens_dev[i][j]
-
-    # Synchronize threads to ensure all data has been copied to shared memory
-    cuda.syncthreads()
-
-    # Compute laplacian
-    laplacian_kernel(shared_input_dens, output_laplacian_dev, nrows_dev, ncols_dev)
-
-    # Compute density update
-    if 1 <= i <= nrows_dev and 1 <= j <= ncols_dev:
-        output_densnext_dev[i][j] = input_dens_dev[i][j] + (D_dev/dx_dev**2)*dt_dev*output_laplacian_dev[i][j]
-
+    if i > 0 and i < nrows_dev + 1 and j > 0 and j < ncols_dev + 1:
+        output_densnext_dev[i][j] = input_dens_dev[i][j] + (D_dev / dx_dev ** 2) * dt_dev * output_laplacian_dev[i][j]
 
 
 # driver routine
