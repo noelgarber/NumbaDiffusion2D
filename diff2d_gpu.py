@@ -10,7 +10,7 @@
 
 import numpy as np
 import time
-from numba import cuda, int32, float64
+from numba import cuda
 from diff2dplot import plotdens
 
 '''
