@@ -93,6 +93,7 @@ def evolve_density_kernel(input_dens_dev, output_laplacian_dev, output_densnext_
 # driver routine
 def main(verbose = False):
     print("Beginning simulation...")
+    start_time = time.time()
 
     # Script sets the parameters D, x1, x2, runtime, dx, outtime, and graphics:
     from diff2dparams import D, x1, x2, runtime, dx, outtime, graphics
@@ -107,22 +108,18 @@ def main(verbose = False):
     nper      = int(outtime/dt) # how many steps between snapshots
     if nper==0: nper = 1
 
-    print("\tNumber of steps:", nsteps, "\n\tSteps per snapshot:", nper) if verbose else None
-
     # Allocate arrays.
     x            = [x1+((i-1)*(x2-x1))/nrows for i in range(npnts)] # x values (also y values)
     blank_array  = np.zeros((npnts, npnts))
     dens_initial = blank_array.copy() # time step t
 
     # Initialize.
-    print("Calculating initial density state... ", end="") if verbose else None
     simtime=0*dt
     for i in range(1,npnts-1):
         a = 1 - abs(1 - 4*abs((x[i]-(x1+x2)/2)/(x2-x1)))
         for j in range(1,npnts-1):
             b = 1 - abs(1 - 4*abs((x[j]-(x1+x2)/2)/(x2-x1)))
             dens_initial[i][j] = a*b
-    print("done") if verbose else None
 
     # Output initial signal.
     print("Simulation time:", simtime)
@@ -130,6 +127,9 @@ def main(verbose = False):
         plotdens(dens_initial, x[0], x[-1], first=True)
 
     #---------------------- Begin GPU Processing Section ----------------------#
+
+    # Start CUDA routine
+    cuda_start_time = time.time()
 
     # Set up the CUDA kernel grid and block sizes
     threadsperblock = (16, 16)
@@ -140,35 +140,30 @@ def main(verbose = False):
     # copy the initialized density array to device memory
     dens_dev = cuda.to_device(dens_initial)
     densnext_dev = cuda.to_device(blank_array)
+    blank_array_dev = cuda.to_device(blank_array)
 
     for s in range(nsteps):
-        print("Step", s, "of", nsteps)
-        t0 = time.time()
-
         # call the kernel function; results are passed into densnext_dev
         update_density[blockspergrid, threadsperblock](dens_dev, densnext_dev, D, dx, dt, nrows, ncols)
-        t1 = time.time()
-        print("\tkernel execution time:", (t1-t0)/1000, "ms") if verbose else None
 
-        # copy results (densnext_dev at t+1) back to host memory
-        dens_host = densnext_dev.copy_to_host()
-        t2 = time.time()
-        print("\tresults retrieval time:", (t2-t1)/1000, "ms")
-
-        # update the simulation time
+        # assign results (densnext_dev at t+1) to replace original input, and update the simulation time
+        dens_dev = densnext_dev
         simtime += dt  # update simulation time
 
-        # prepare for next round
-        dens_dev = cuda.to_device(dens_host)
-        densnext_dev = cuda.to_device(blank_array)
-        t3 = time.time()
-        print("\ttime spent copying arrays to device for next round:", (t3-t2)/1000, "ms") if verbose else None
+        # prepare for next round by blanking the receiving array
+        densnext_dev = cuda.to_device(blank_array_dev)
 
         # output snapshot if necessary
         if (s + 1) % nper == 0:
-            print(simtime)
+            print("Simulation time:", simtime)
             if graphics:
+                dens_host = dens_dev.copy_to_host()
                 plotdens(dens_host, x[0], x[-1])
 
+    # Report elapsed time for CUDA routine and host processes
+    end_time = time.time()
+    print("CUDA processing time:", end_time - cuda_start_time, "s")
+    print("Host processing time:", cuda_start_time - start_time, "s")
+
 if __name__ == '__main__':
-    main(verbose = True)
+    main()
