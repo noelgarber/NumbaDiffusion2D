@@ -30,66 +30,6 @@ def update_density(T, T_out, D, dx, dt, N_x, N_y):
         T_new = T[i,j] + (D*dt)*laplacian_value
         T_out[i,j] = T_new
 
-
-
-'''
-# Naive kernel with a new approach. Speed issues may be due to inefficient grid and block size, or inefficient
-# memory management (global memory is slow compared to shared memory), or some combination of these factors.
-@cuda.jit('void(float32[:,:], float32[:,:], int32, int32, float32, float32, float32)')
-def update_density(input_dens_dev, output_densnext_dev, nrows_dev, ncols_dev, D_dev, dx_dev, dt_dev):
-    for i in range(1, nrows_dev + 1):
-        for j in range(1, ncols_dev + 1):
-            laplacian_ij = input_dens_dev[i + 1][j] + input_dens_dev[i - 1][j] + input_dens_dev[i][j + 1] + input_dens_dev[i][j - 1] - 4 * input_dens_dev[i][j]
-            output_densnext_dev[i][j] = input_dens_dev[i][j] + (D_dev / dx_dev ** 2) * dt_dev * laplacian_ij
-
-
-
-@cuda.jit('void(float64[:,:], float64[:,:], int32, int32, int32, int32, float64, float64, float64)')
-def update_density(input_dens_dev, output_densnext_dev, nrows_dev, ncols_dev, block_dim_x, block_dim_y, D_dev, dx_dev, dt_dev):
-    # Obtain D, dx, and dt, and block dimensions from constant memory as read-only pointers
-    D_const = cuda.const.array_like(D_dev)
-    dx_const = cuda.const.array_like(dx_dev)
-    dt_const = cuda.const.array_like(dt_dev)
-    bdimx_const = cuda.const.array_like(block_dim_x)
-    bdimy_const = cuda.const.array_like(block_dim_y)
-
-    i, j = cuda.grid(2)
-    if i > 0 and i < nrows_dev+1 and j > 0 and j < ncols_dev+1:
-        s_input_dens = cuda.shared.array((bdimx_const+2, bdimy_const+2), dtype=float64)
-        s_input_dens[i % bdimx_const + 1, j % bdimy_const + 1] = input_dens_dev[i, j]
-        if i % bdimx_const == 0 and i > 0:
-            s_input_dens[0, j % bdimy_const + 1] = input_dens_dev[i-1, j]
-        if i % bdimx_const == bdimx_const - 1 and i < nrows_dev:
-            s_input_dens[bdimx_const + 1, j % bdimy_const + 1] = input_dens_dev[i+1, j]
-        if j % bdimy_const == 0 and j > 0:
-            s_input_dens[i % bdimx_const + 1, 0] = input_dens_dev[i, j-1]
-        if j % bdimy_const == bdimx_const - 1 and j < ncols_dev:
-            s_input_dens[i % bdimx_const + 1, bdimy_const + 1] = input_dens_dev[i, j+1]
-        cuda.syncthreads()
-
-        laplacian_ij = s_input_dens[i % bdimx_const + 2, j % bdimy_const + 1] + s_input_dens[i % bdimx_const, j % bdimy_const + 1] + s_input_dens[i % bdimx_const + 1, j % bdimy_const + 2] + s_input_dens[i % bdimx_const + 1, j % bdimy_const] - 4 * s_input_dens[i % bdimx_const + 1, j % bdimy_const + 1]
-        output_densnext_dev[i, j] = input_dens_dev[i, j] + (D_const / dx_const ** 2) * dt_const * laplacian_ij
-'''
-
-
-'''
-# TODO Use the cuda grid function etc. from here in the new kernel above
-# Define the main kernel to evolve the density using the diffusion equations; first computes the laplacian and then evolves the density
-@cuda.jit('void(float64[:,:], float64[:,:], float64[:,:], int32, int32, float64, float64, float64)')
-def evolve_density_kernel(input_dens_dev, output_laplacian_dev, output_densnext_dev, nrows_dev, ncols_dev, D_dev, dx_dev, dt_dev):
-    # Define block and grid dimensions for the Laplacian kernel launched from within this kernel below
-    blockDim_laplacian = (32, 32)
-    gridDim_laplacian = ((nrows_dev + blockDim_laplacian[0] - 1) // blockDim_laplacian[0], (ncols_dev + blockDim_laplacian[1] - 1) // blockDim_laplacian[1])
-
-    # Compute the laplacian
-    laplacian_kernel[gridDim_laplacian, blockDim_laplacian](input_dens_dev, output_laplacian_dev, nrows_dev, ncols_dev)
-
-    # Compute the new density
-    i, j = cuda.grid(2)
-    if i > 0 and i < nrows_dev + 1 and j > 0 and j < ncols_dev + 1:
-        output_densnext_dev[i][j] = input_dens_dev[i][j] + (D_dev / dx_dev ** 2) * dt_dev * output_laplacian_dev[i][j]
-'''
-
 # driver routine
 def main(verbose = False):
     print("Beginning simulation...")

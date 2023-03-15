@@ -7,11 +7,14 @@
 # SciNetHPC, 2016
 #
 
+import time
+
 # import plotdens function
 from diff2dplot import plotdens
 
 # driver routine
 def main():
+    start_time = time.time()
     # Script sets the parameters D, x1, x2, runtime, dx, outtime, and graphics:
     from diff2dparams import D, x1, x2, runtime, dx, outtime, graphics
     # Compute derived parameters.
@@ -56,6 +59,8 @@ def main():
             print(simtime)
             if graphics:
                 plotdens(dens, x[0], x[-1])
+    end_time = time.time()
+    print("Total processing time:", end_time - start_time, "s")
 
 if __name__ == '__main__':
     main()
