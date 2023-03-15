@@ -9,8 +9,6 @@
 #
 
 import numpy as np
-import cupy as cp
-import sys
 import time
 from numba import cuda, int32, float64
 from diff2dplot import plotdens
@@ -22,7 +20,7 @@ Define the density update kernel using the heat equation, where:
     dx = space step
     dt = time step
 '''
-@cuda.jit
+@cuda.jit('void(float64[:,:], float64[:,:], float64, float64, float64, int32, int32)')
 def update_density(T, T_out, D, dx, dt, N_x, N_y):
     i, j = cuda.grid(2)
     if i >= 1 and i < N_x-1 and j >= 1 and j < N_y-1:
