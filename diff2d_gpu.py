@@ -6,6 +6,8 @@
 # SciNetHPC, 2016
 #
 # Modified by: Noel Garber
+# Course: HPC133, University of Toronto
+# Instructor: Yohai Meiron
 #
 
 import numpy as np
